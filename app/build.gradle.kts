@@ -8,7 +8,7 @@ plugins {
 android {
     namespace = "com.example.helloworldapp"
 
-    // ✅ Targeting the latest Android SDK
+    // ✅ Targeting the latest Android SDK (Android 15)
     compileSdk = 36
 
     defaultConfig {
@@ -67,17 +67,23 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
 
-    // --- Jetpack Compose ---
+    // --- Jetpack Compose Core ---
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
-    implementation("androidx.compose.ui:ui-text:1.7.5") // ✅ Required for KeyboardOptions & ImeAction
-    implementation("androidx.compose.foundation:foundation:1.7.5") // Focus & Keyboard control
+    implementation("androidx.compose.ui:ui-text:1.7.5") // Text & ImeAction support
+    implementation("androidx.compose.foundation:foundation:1.7.5") // Focus & gestures
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
+    implementation("androidx.compose.animation:animation:1.7.5") // Animation support
 
-    // ✅ Material Icons (Visibility/VisibilityOff icons)
+    // Material Icons (Visibility/VisibilityOff icons)
     implementation("androidx.compose.material:material-icons-extended:1.7.5")
+
+    // Jetpack Compose Add-ons
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
+    implementation("androidx.constraintlayout:constraintlayout-compose:1.1.0")
+    implementation("com.google.accompanist:accompanist-permissions:0.36.0")
 
     // --- Networking (OkHttp + Retrofit) ---
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
@@ -90,14 +96,18 @@ dependencies {
     // --- Image Loading (Coil for Compose) ---
     implementation("io.coil-kt:coil-compose:2.2.2")
 
-    // --- ✅ Biometric Authentication ---
+    // --- Biometric Authentication ---
     implementation("androidx.biometric:biometric:1.2.0-alpha05")
 
-    // --- ✅ Secure Storage (EncryptedSharedPreferences) ---
+    // --- Secure Storage (EncryptedSharedPreferences) ---
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
-    // --- ✅ Optional: Animation support for Compose ---
-    implementation("androidx.compose.animation:animation:1.7.5")
+    // ---------------------------------------------------
+    // 🚀 MQTT Support (Required for Live Count Updates)
+    // ---------------------------------------------------
+    implementation("org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5")
+    implementation("org.eclipse.paho:org.eclipse.paho.android.service:1.1.1")
+    // ---------------------------------------------------
 
     // --- Testing ---
     testImplementation(libs.junit)

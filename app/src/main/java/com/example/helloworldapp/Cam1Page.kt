@@ -36,92 +36,88 @@ class Cam1Page : ComponentActivity() {
 fun Cam1Screen(context: Context) {
     val prefs = context.getSharedPreferences("UserPrefs", Context.MODE_PRIVATE)
 
-    // 🔧 Load user metadata
     val name = prefs.getString("name", "N/A") ?: "N/A"
     val role = prefs.getString("role", "N/A") ?: "N/A"
     val userId = prefs.getString("userId", "N/A") ?: "N/A"
     val deviceUniqueId = prefs.getString("deviceId", "N/A") ?: "N/A"
 
-    // ✅ Get backend-generated session_id (from LoginActivity)
     val storedSessionId = prefs.getString("session_id", null)
     val storedTransactionId = prefs.getString("transaction_id_cam1", "")
 
     var sessionId by remember { mutableStateOf(storedSessionId ?: "") }
     var currentTransactionId by remember { mutableStateOf(storedTransactionId ?: "") }
 
-    // ⚙️ UI State
     var vehicleNumber by remember { mutableStateOf(TextFieldValue("")) }
     var isDetecting by remember { mutableStateOf(currentTransactionId.isNotEmpty()) }
+
+    // LIVE COUNTS
     var counts by remember { mutableStateOf(mapOf("box" to 0, "bale" to 0, "trolley" to 0)) }
+
+    var pollingJob by remember { mutableStateOf<Job?>(null) }
 
     val coroutineScope = rememberCoroutineScope()
     val client = remember { OkHttpClient() }
 
-    // 🌐 Backend API endpoints
+    // Confirmation dialog trigger
+    var showInvalidConfirmDialog by remember { mutableStateOf(false) }
+
+    // Regex for vehicle number verification
+    val vehicleNumberRegex = remember {
+        Regex(
+            "^[A-Z]{2}\\s?\\d{1,2}\\s?[A-Z]{1,3}\\s?\\d{1,4}$"
+        )
+    }
+
+    // Backend URLs
     val SERVER_IP = "192.168.1.7"
     val START_URL = "http://$SERVER_IP:8000/start"
     val STOP_URL = "http://$SERVER_IP:8000/stop"
     val COUNT_URL = "http://$SERVER_IP:8000/poll_counts"
 
-    // 🔁 Polling loop for live counts
-    val detectingState = rememberUpdatedState(isDetecting)
+    // ------------ POLLING FUNCTION ------------
+    fun startPollingCounts(sessionId: String, transactionId: String) {
+        pollingJob?.cancel() // stop old one if any
 
-    LaunchedEffect(sessionId, currentTransactionId) {
-        if (sessionId.isEmpty()) {
-            Log.e("Cam1Page", "No valid session ID found — please log in first.")
-            return@LaunchedEffect
-        }
-
-        var stopPolling = false
-        while (!stopPolling) {
-            if (detectingState.value && currentTransactionId.isNotEmpty()) {
+        pollingJob = coroutineScope.launch(Dispatchers.IO) {
+            while (isActive) {
                 try {
-                    withContext(Dispatchers.IO) {
-                        val request = Request.Builder()
-                            .url("$COUNT_URL/$sessionId/$currentTransactionId")
-                            .get()
-                            .build()
+                    val request = Request.Builder()
+                        .url("$COUNT_URL/$sessionId/$transactionId")
+                        .get()
+                        .build()
 
-                        val response = client.newCall(request).execute()
-                        val body = response.body?.string()
+                    val response = client.newCall(request).execute()
+                    val bodyString = response.body?.string()
+                    response.close()
 
-                        if (response.isSuccessful && body != null) {
-                            val json = JSONObject(body)
-                            val jsonCounts = json.optJSONObject("counts")
-
-                            if (jsonCounts != null) {
-                                val newCounts = mapOf(
-                                    "box" to jsonCounts.optInt("box", 0),
-                                    "bale" to jsonCounts.optInt("bale", 0),
-                                    "trolley" to jsonCounts.optInt("trolley", 0)
-                                )
-
-                                if (newCounts != counts) {
-                                    withContext(Dispatchers.Main) {
-                                        counts = newCounts
-                                        Log.d("Polling", "Counts updated: $counts")
-                                    }
-                                }
-                            }
-                        } else if (response.code == 404) {
-                            withContext(Dispatchers.Main) {
-                                Toast.makeText(context, "Session not found or ended.", Toast.LENGTH_SHORT).show()
-                            }
-                            stopPolling = true
-                        }
-
-                        response.close()
+                    if (!response.isSuccessful || bodyString.isNullOrEmpty()) {
+                        delay(1000)
+                        continue
                     }
+
+                    val json = JSONObject(bodyString)
+                    val c = json.getJSONObject("counts")
+
+                    val updatedCounts = mapOf(
+                        "box" to c.optInt("box", 0),
+                        "bale" to c.optInt("bale", 0),
+                        "trolley" to c.optInt("trolley", 0)
+                    )
+
+                    withContext(Dispatchers.Main) {
+                        counts = updatedCounts
+                    }
+
                 } catch (e: Exception) {
-                    Log.e("Polling", "Error: ${e.message}")
+                    Log.e("POLL", "Polling failed: ${e.message}")
                 }
+
+                delay(1000)
             }
-            if (stopPolling) break
-            delay(1000) // 1-second delay between polls
         }
     }
+    // ------------ END POLLING FUNCTION ------------
 
-    // 🚀 UI Layout
     MaterialTheme {
         Surface(modifier = Modifier.fillMaxSize()) {
             Column(
@@ -131,106 +127,140 @@ fun Cam1Screen(context: Context) {
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
-                Text(
-                    "YOLOv5 Detection Control - Cam 1",
-                    fontSize = 22.sp,
-                    color = MaterialTheme.colorScheme.primary
-                )
+
+                Text("Detection Control - Cam 1", fontSize = 23.sp)
 
                 Spacer(modifier = Modifier.height(12.dp))
-                Text("Supervisor: $name ($role)", fontSize = 16.sp)
+                Text("Supervisor: $name", fontSize = 16.sp)
 
-                if (sessionId.isNotEmpty())
-                    Text("Session ID: $sessionId", fontSize = 14.sp)
-                else
-                    Text("⚠️ No session ID found — please log in first", fontSize = 14.sp)
-
-                if (currentTransactionId.isNotEmpty())
-                    Text("Transaction ID: $currentTransactionId", fontSize = 14.sp)
+                if (sessionId.isNotEmpty()) Text("Session ID: $sessionId", fontSize = 12.sp)
+                if (currentTransactionId.isNotEmpty()) Text("Transaction ID: $currentTransactionId", fontSize = 12.sp)
 
                 Spacer(modifier = Modifier.height(24.dp))
 
                 OutlinedTextField(
                     value = vehicleNumber,
-                    onValueChange = { vehicleNumber = it },
+                    onValueChange = {
+                        vehicleNumber = it.copy(text = it.text.uppercase())
+                    },
                     label = { Text("Vehicle Number") },
                     modifier = Modifier.fillMaxWidth(0.9f)
                 )
 
                 Spacer(modifier = Modifier.height(24.dp))
 
+                // ---------------- Buttons ----------------
                 Row(
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    // ▶️ START Button
+
+                    // START
                     Button(
                         onClick = {
                             if (sessionId.isEmpty()) {
-                                Toast.makeText(context, "No session ID found. Please log in again.", Toast.LENGTH_LONG).show()
+                                Toast.makeText(context, "No session ID found!", Toast.LENGTH_SHORT).show()
                                 return@Button
                             }
-                            if (vehicleNumber.text.isBlank()) {
-                                Toast.makeText(context, "Enter vehicle number first!", Toast.LENGTH_SHORT).show()
-                            } else {
-                                coroutineScope.launch {
-                                    val transactionId = UUID.randomUUID().toString()
-                                    currentTransactionId = transactionId
 
-                                    prefs.edit()
-                                        .putString("transaction_id_cam1", transactionId)
-                                        .apply()
+                            if (!vehicleNumberRegex.matches(vehicleNumber.text.trim())) {
+                                showInvalidConfirmDialog = true
+                                return@Button
+                            }
 
-                                    startDetectionCam1(
-                                        context, client, START_URL,
-                                        name, role, userId, deviceUniqueId,
-                                        vehicleNumber.text, sessionId, transactionId
-                                    ) { success ->
-                                        if (success) isDetecting = true
+                            coroutineScope.launch {
+                                val transactionId = UUID.randomUUID().toString()
+                                currentTransactionId = transactionId
+                                prefs.edit().putString("transaction_id_cam1", transactionId).apply()
+
+                                startDetectionCam1(
+                                    context, client, START_URL,
+                                    name, role, userId, deviceUniqueId,
+                                    vehicleNumber.text, sessionId, transactionId
+                                ) { success ->
+                                    if (success) {
+                                        isDetecting = true
+                                        startPollingCounts(sessionId, transactionId)
                                     }
                                 }
                             }
                         },
                         enabled = !isDetecting,
                         modifier = Modifier.width(150.dp)
-                    ) {
-                        Text("Start")
-                    }
+                    ) { Text("Start") }
 
-                    // ⏹️ STOP Button
+                    // STOP
                     Button(
                         onClick = {
                             coroutineScope.launch {
-                                stopDetectionCam1(context, client, STOP_URL, sessionId, currentTransactionId) { success ->
-                                    if (success) {
-                                        isDetecting = false
-                                        counts = mapOf("box" to 0, "bale" to 0, "trolley" to 0)
-                                        vehicleNumber = TextFieldValue("")
-                                        currentTransactionId = ""
-                                        prefs.edit().remove("transaction_id_cam1").apply()
-                                    }
-                                }
+                                stopDetectionCam1(context, client, STOP_URL, sessionId, currentTransactionId) {}
+
+                                pollingJob?.cancel()
+                                pollingJob = null
+
+                                isDetecting = false
+                                counts = mapOf("box" to 0, "bale" to 0, "trolley" to 0)
+                                vehicleNumber = TextFieldValue("")
+                                currentTransactionId = ""
+                                prefs.edit().remove("transaction_id_cam1").apply()
+
+                                Toast.makeText(context, "Detection stopped", Toast.LENGTH_SHORT).show()
                             }
                         },
                         enabled = isDetecting,
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
                         modifier = Modifier.width(150.dp)
-                    ) {
-                        Text("Stop")
-                    }
+                    ) { Text("Stop") }
                 }
+                // -----------------------------------------
 
                 Spacer(modifier = Modifier.height(30.dp))
 
-                if (isDetecting) {
-                    LiveCountsPanelCam1(counts)
-                }
+                if (isDetecting) LiveCountsPanelCam1(counts)
+            }
+
+            // INVALID NUMBER CONFIRMATION POPUP
+            if (showInvalidConfirmDialog) {
+                AlertDialog(
+                    onDismissRequest = { showInvalidConfirmDialog = false },
+                    title = { Text("Invalid Vehicle Format") },
+                    text = { Text("This number doesn't match official format. Continue?") },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            showInvalidConfirmDialog = false
+
+                            coroutineScope.launch {
+                                val transactionId = UUID.randomUUID().toString()
+                                currentTransactionId = transactionId
+                                prefs.edit().putString("transaction_id_cam1", transactionId).apply()
+
+                                startDetectionCam1(
+                                    context, client, START_URL,
+                                    name, role, userId, deviceUniqueId,
+                                    vehicleNumber.text, sessionId, transactionId
+                                ) { success ->
+                                    if (success) {
+                                        isDetecting = true
+                                        startPollingCounts(sessionId, transactionId)
+                                    }
+                                }
+                            }
+                        }) { Text("Yes") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showInvalidConfirmDialog = false }) {
+                            Text("Cancel")
+                        }
+                    }
+                )
             }
         }
     }
 }
 
-// ✅ Start Detection API Call (Cam 1)
+// ------------------------------------------
+// START CAMERA API CALL
+// ------------------------------------------
 suspend fun startDetectionCam1(
     context: Context,
     client: OkHttpClient,
@@ -262,30 +292,24 @@ suspend fun startDetectionCam1(
             .build()
 
         val response = client.newCall(request).execute()
-        val body = response.body?.string()
+        val ok = response.isSuccessful
         response.close()
 
-        if (response.isSuccessful) {
-            withContext(Dispatchers.Main) {
-                Toast.makeText(context, "Detection started (Cam 1)!", Toast.LENGTH_SHORT).show()
-            }
-            onResult(true)
-        } else {
-            withContext(Dispatchers.Main) {
-                Toast.makeText(context, "Start failed: $body", Toast.LENGTH_LONG).show()
-            }
-            onResult(false)
-        }
-    } catch (e: IOException) {
-        e.printStackTrace()
         withContext(Dispatchers.Main) {
-            Toast.makeText(context, "Network error: ${e.message}", Toast.LENGTH_LONG).show()
+            if (ok) Toast.makeText(context, "Detection Started!", Toast.LENGTH_SHORT).show()
         }
+
+        onResult(ok)
+
+    } catch (e: Exception) {
+        Log.e("START", "Error: ${e.message}")
         onResult(false)
     }
 }
 
-// ✅ Stop Detection API Call (Cam 1) — now includes transaction_id
+// ------------------------------------------
+// STOP CAMERA API CALL
+// ------------------------------------------
 suspend fun stopDetectionCam1(
     context: Context,
     client: OkHttpClient,
@@ -306,30 +330,24 @@ suspend fun stopDetectionCam1(
             .build()
 
         val response = client.newCall(request).execute()
-        val body = response.body?.string()
+        val ok = response.isSuccessful
         response.close()
 
-        if (response.isSuccessful) {
-            withContext(Dispatchers.Main) {
-                Toast.makeText(context, "Detection stopped (Cam 1)!", Toast.LENGTH_SHORT).show()
-            }
-            onResult(true)
-        } else {
-            withContext(Dispatchers.Main) {
-                Toast.makeText(context, "Stop failed: $body", Toast.LENGTH_LONG).show()
-            }
-            onResult(false)
-        }
-    } catch (e: IOException) {
-        e.printStackTrace()
         withContext(Dispatchers.Main) {
-            Toast.makeText(context, "Network error: ${e.message}", Toast.LENGTH_LONG).show()
+            if (ok) Toast.makeText(context, "Detection Stopped!", Toast.LENGTH_SHORT).show()
         }
+
+        onResult(ok)
+
+    } catch (e: Exception) {
+        Log.e("STOP", "Error: ${e.message}")
         onResult(false)
     }
 }
 
-// ✅ Live Counts UI (Cam 1)
+// ------------------------------------------
+// LIVE COUNTS UI
+// ------------------------------------------
 @Composable
 fun LiveCountsPanelCam1(counts: Map<String, Int>) {
     Card(

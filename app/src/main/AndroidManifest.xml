@@ -23,6 +23,11 @@
         android:theme="@style/Theme.HelloWorldApp"
         tools:targetApi="31">
 
+        <!-- ✅ REQUIRED for MQTT (Fixes Cam1Page Not Opening) -->
+        <service
+            android:name="org.eclipse.paho.android.service.MqttService"
+            android:exported="false" />
+
         <!-- 🧾 Registration Page -->
         <activity
             android:name=".RegistrationActivity"

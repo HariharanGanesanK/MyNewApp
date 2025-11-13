@@ -2,12 +2,25 @@ package com.example.helloworldapp
 
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // ✅ Check Wi-Fi connection before proceeding
+        if (!isWifiConnected()) {
+            Toast.makeText(
+                this,
+                "Please connect to a Wi-Fi network to continue.",
+                Toast.LENGTH_LONG
+            ).show()
+            return // Stop further navigation
+        }
 
         // ✅ Read stored user data
         val prefs = getSharedPreferences("UserPrefs", Context.MODE_PRIVATE)
@@ -15,28 +28,34 @@ class MainActivity : ComponentActivity() {
         val role = prefs.getString("role", null)
         val email = prefs.getString("email", null)
         val userId = prefs.getString("userId", null)
-        val protectionStatus = prefs.getString("protection", "disabled") // 👈 biometric protection status
+        val protectionStatus = prefs.getString("protection", "disabled")
 
         // ✅ 1️⃣ Check user registration
         if (name == null || role == null || email == null || userId == null) {
-            // ❌ No registration → go to RegistrationActivity
             val intent = Intent(this, RegistrationActivity::class.java)
             startActivity(intent)
             finish()
             return
         }
 
-        // ✅ 2️⃣ User already registered → check protection status
+        // ✅ 2️⃣ Registered → check protection status
         if (protectionStatus == "enabled") {
-            // 🔐 Protection ON → go to AuthenticationActivity (biometric / device PIN unlock)
             val intent = Intent(this, AuthenticationActivity::class.java)
             startActivity(intent)
             finish()
         } else {
-            // 🚀 Protection OFF → directly go to LoginActivity
             val intent = Intent(this, LoginActivity::class.java)
             startActivity(intent)
             finish()
         }
+    }
+
+    // ✅ Function to check Wi-Fi connection
+    private fun isWifiConnected(): Boolean {
+        val connectivityManager =
+            getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val network = connectivityManager.activeNetwork ?: return false
+        val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
+        return capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
     }
 }

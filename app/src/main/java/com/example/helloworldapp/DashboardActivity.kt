@@ -3,32 +3,45 @@ package com.example.helloworldapp
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.animation.*
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CalendarToday
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.rememberAsyncImagePainter
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.GET
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
-// ✅ Model class
+// -------------------------------------------------------------
+// MODEL
+// -------------------------------------------------------------
 data class Transaction(
     val transaction_id: String?,
     val name: String?,
@@ -45,7 +58,9 @@ data class Transaction(
     val imageUrl: String?
 )
 
-// ✅ API service
+// -------------------------------------------------------------
+// API
+// -------------------------------------------------------------
 interface ApiService {
     @GET("api/transactions/today")
     suspend fun getTodayTransactions(): List<Transaction>
@@ -54,111 +69,414 @@ interface ApiService {
     suspend fun getGroupedTransactions(): Map<String, List<Transaction>>
 }
 
-// ✅ Helper for clickable text (expand/collapse)
-fun Modifier.clickableNoRipple(onClick: () -> Unit): Modifier {
-    return pointerInput(Unit) { detectTapGestures { onClick() } }
-}
-
-// ✅ Activity
+// -------------------------------------------------------------
+// MAIN ACTIVITY
+// -------------------------------------------------------------
 class DashboardActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { DashboardScreen() }
+        setContent {
+            MaterialTheme(colorScheme = lightColorScheme()) {
+                DashboardScreen()
+            }
+        }
     }
 }
 
+// -------------------------------------------------------------
+// DASHBOARD SCREEN
+// -------------------------------------------------------------
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DashboardScreen() {
-    // 🚀 Backend base URL
+
     val api = remember {
         Retrofit.Builder()
-            .baseUrl("http://192.168.1.7:9020/") // ✅ your working backend IP
+            .baseUrl("http://192.168.1.7:9020/")
             .addConverterFactory(GsonConverterFactory.create())
             .build()
             .create(ApiService::class.java)
     }
 
+    val scope = rememberCoroutineScope()
+
     var todayData by remember { mutableStateOf<List<Transaction>>(emptyList()) }
     var groupedHistory by remember { mutableStateOf<Map<String, List<Transaction>>>(emptyMap()) }
+
     val expandedDates = remember { mutableStateMapOf<String, Boolean>() }
 
-    // ✅ Fetch today's data every 5s
+    var expandedCardId by remember { mutableStateOf<String?>(null) }        // TODAY
+    var expandedHistoryCardId by remember { mutableStateOf<String?>(null) } // LAST 7 DAYS  (OPTION C)
+
+    var isRefreshing by remember { mutableStateOf(false) }
+
+    // AUTO REFRESH 10s
     LaunchedEffect(Unit) {
         while (true) {
             try {
                 todayData = api.getTodayTransactions()
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-            delay(5000)
-        }
-    }
-
-    // ✅ Fetch grouped history every 10s
-    LaunchedEffect(Unit) {
-        while (true) {
-            try {
                 groupedHistory = api.getGroupedTransactions()
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+                val firstActive = todayData.firstOrNull { it.endTime == null }
+                if (expandedCardId == null && firstActive != null)
+                    expandedCardId = firstActive.transaction_id
+
+            } catch (_: Exception) {}
             delay(10000)
         }
     }
 
-    // ✅ UI
-    if (todayData.isEmpty() && groupedHistory.isEmpty()) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("🔄 Loading data...", color = Color(0xFF38bdf8))
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        "📊 7-Day Loading Dashboard",
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF0D47A1),
+                        fontSize = 20.sp
+                    )
+                },
+                actions = {
+                    IconButton(onClick = {
+                        scope.launch(Dispatchers.IO) {
+                            isRefreshing = true
+                            try {
+                                todayData = api.getTodayTransactions()
+                                groupedHistory = api.getGroupedTransactions()
+                            } catch (_: Exception) {}
+                            isRefreshing = false
+                        }
+                    }) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Refresh",
+                            tint = if (isRefreshing) Color.Gray else Color(0xFF1565C0)
+                        )
+                    }
+                }
+            )
         }
-    } else {
-        LazyColumn(
-            modifier = Modifier
+    ) { innerPadding ->
+
+        Box(
+            Modifier
                 .fillMaxSize()
-                .background(Color(0xFF0f172a))
-                .padding(12.dp)
+                .background(Color(0xFFF8FAFB))
+                .padding(innerPadding)
         ) {
-            item {
+
+            if (groupedHistory.isEmpty()) {
+                Box(Modifier.fillMaxSize(), Alignment.Center) {
+                    Text("⏳ Fetching loadings...", color = Color(0xFF607D8B))
+                }
+            } else {
+
+                val today = LocalDate.now()
+                val isoFormatter = DateTimeFormatter.ISO_DATE
+                val prettyFormatter = DateTimeFormatter.ofPattern("MMM dd, yyyy")
+
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 16.dp, vertical = 10.dp)
+                ) {
+
+                    // -------------------------------------------------------------
+                    // TODAY'S ACTIVE LOADING
+                    // -------------------------------------------------------------
+                    item {
+                        Text(
+                            "📅 Today’s Active Loadings",
+                            color = Color(0xFF00796B),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                    }
+
+                    if (todayData.isNotEmpty()) {
+                        val sortedToday = todayData.sortedByDescending { it.startTime ?: "" }
+
+                        itemsIndexed(sortedToday) { _, item ->
+                            val isExpanded = expandedCardId == item.transaction_id
+
+                            StylishCard(
+                                item = item,
+                                isExpanded = isExpanded,
+                                onToggleExpand = {
+                                    expandedCardId =
+                                        if (isExpanded) null else item.transaction_id
+                                }
+                            )
+                        }
+                    }
+
+                    // -------------------------------------------------------------
+                    // LAST 7 DAYS LOADING
+                    // -------------------------------------------------------------
+                    item {
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            "🗓 Last 7 Days Loadings",
+                            color = Color(0xFF1E3A8A),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp,
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+                    }
+
+                    groupedHistory.keys.sortedDescending().forEach { dateKey ->
+
+                        val records = groupedHistory[dateKey] ?: emptyList()
+                        val expanded = expandedDates[dateKey] ?: false
+
+                        val prettyDate = try {
+                            LocalDate.parse(dateKey, isoFormatter).format(prettyFormatter)
+                        } catch (_: Exception) { dateKey }
+
+                        val label =
+                            if (dateKey == today.format(isoFormatter))
+                                "Today (${records.size})"
+                            else "$prettyDate (${records.size})"
+
+                        // DATE HEADER
+                        item {
+                            Card(
+                                onClick = { expandedDates[dateKey] = !expanded },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 6.dp)
+                                    .animateContentSize(),
+                                shape = RoundedCornerShape(16.dp),
+                                elevation = CardDefaults.cardElevation(2.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor =
+                                        if (expanded) Color(0xFFE3F2FD) else Color(0xFFF9FAFB)
+                                )
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.CalendarToday,
+                                        contentDescription = null,
+                                        tint = Color(0xFF1565C0)
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+
+                                    Text(
+                                        text = label,
+                                        color = Color(0xFF0D47A1),
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 16.sp,
+                                        modifier = Modifier.weight(1f)
+                                    )
+
+                                    Surface(
+                                        color = if (records.isNotEmpty()) Color(0xFF2196F3)
+                                        else Color.LightGray,
+                                        shape = CircleShape
+                                    ) {
+                                        Text(
+                                            "${records.size}",
+                                            modifier = Modifier.padding(10.dp),
+                                            color = Color.White,
+                                            fontSize = 13.sp
+                                        )
+                                    }
+
+                                    Spacer(Modifier.width(6.dp))
+
+                                    Icon(
+                                        imageVector = if (expanded) Icons.Default.ExpandLess
+                                        else Icons.Default.ExpandMore,
+                                        contentDescription = null,
+                                        tint = Color(0xFF1565C0)
+                                    )
+                                }
+                            }
+                        }
+
+                        // INNER RECORDS (NOW EXPANDABLE OPTION C)
+                        item {
+
+                            AnimatedVisibility(
+                                visible = expanded && records.isNotEmpty(),
+                                enter = fadeIn() + expandVertically(),
+                                exit = fadeOut()
+                            ) {
+
+                                Column(Modifier.padding(horizontal = 8.dp)) {
+
+                                    records.sortedByDescending { it.startTime ?: "" }
+                                        .forEach { rec ->
+
+                                            val recordWithDate =
+                                                if (rec.date.isNullOrBlank())
+                                                    rec.copy(date = dateKey)
+                                                else rec
+
+                                            val isExpanded =
+                                                expandedHistoryCardId == recordWithDate.transaction_id
+
+                                            HistoryCard(
+                                                item = recordWithDate,
+                                                isExpanded = isExpanded,
+                                                onToggleExpand = {
+                                                    expandedHistoryCardId =
+                                                        if (isExpanded) null
+                                                        else recordWithDate.transaction_id
+                                                }
+                                            )
+                                        }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// -------------------------------------------------------------
+// TODAY'S CARD
+// -------------------------------------------------------------
+@Composable
+fun StylishCard(item: Transaction, isExpanded: Boolean, onToggleExpand: () -> Unit) {
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp)
+            .shadow(3.dp, RoundedCornerShape(16.dp))
+            .animateContentSize(tween(300))
+            .clickable { onToggleExpand() },
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+
+        Column(Modifier.padding(14.dp)) {
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "📊 Loading Dashboard",
-                    color = Color(0xFF38f865),
-                    fontSize = 22.sp,
-                    modifier = Modifier.padding(bottom = 10.dp)
+                    "🚗 ${item.vehicleNumber ?: "Unknown"}",
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF1E88E5),
+                    fontSize = 17.sp,
+                    modifier = Modifier.weight(1f)
+                )
+
+                Text(
+                    if (item.endTime == null) "🟢 LIVE" else "✅ DONE",
+                    color = if (item.endTime == null)
+                        Color(0xFF388E3C) else Color(0xFF455A64),
+                    fontWeight = FontWeight.Bold
                 )
             }
 
-            // ✅ Today's loadings
-            if (todayData.isNotEmpty()) {
-                itemsIndexed(todayData) { _, item -> TodayBox(item) }
-            } else {
-                item {
-                    Text(
-                        "📅 No loadings today",
-                        color = Color(0xFFa1a1aa),
-                        fontSize = 16.sp,
-                        modifier = Modifier.padding(vertical = 8.dp)
-                    )
-                }
-            }
+            Spacer(Modifier.height(4.dp))
 
-            // ✅ Grouped history (excluding today)
-            val today = LocalDate.now().format(DateTimeFormatter.ISO_DATE)
-            groupedHistory.keys.sortedDescending().forEach { date ->
-                val records = groupedHistory[date] ?: emptyList()
-                if (date != today) {
-                    item {
-                        val expanded = expandedDates[date] ?: false
-                        Text(
-                            text = if (expanded) "📂 $date (${records.size})" else "📁 $date (${records.size})",
-                            color = Color(0xFFE7EDEE),
-                            fontSize = 18.sp,
+            Text("👤 ${item.name ?: "N/A"} — ${item.role ?: "Role"}",
+                color = Color(0xFF424242))
+
+            Text("📹 ${item.camera ?: "Unknown Camera"}",
+                color = Color(0xFF546E7A))
+
+            Text("📅 ${item.date ?: "N/A"} | ⏰ ${item.startTime} → ${item.endTime ?: "..."}",
+                color = Color.Gray)
+
+            AnimatedVisibility(
+                visible = isExpanded,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
+            ) {
+
+                Column {
+
+                    Spacer(Modifier.height(8.dp))
+                    ConditionalStats(item)
+                    Spacer(Modifier.height(10.dp))
+
+                    if (item.imageUrl.isNullOrBlank()) {
+                        Text("❌ No image available", color = Color.Red)
+                    } else {
+                        Image(
+                            painter = rememberAsyncImagePainter(item.imageUrl),
+                            contentDescription = null,
                             modifier = Modifier
-                                .padding(vertical = 6.dp)
-                                .clickableNoRipple { expandedDates[date] = !expanded }
+                                .fillMaxWidth()
+                                .height(160.dp)
+                                .clip(RoundedCornerShape(12.dp))
                         )
                     }
-                    if (expandedDates[date] == true) {
-                        itemsIndexed(records) { _, rec -> HistoryBox(rec) }
+                }
+            }
+        }
+    }
+}
+
+// -------------------------------------------------------------
+// EXPANDABLE HISTORY CARD (OPTION C)
+// -------------------------------------------------------------
+@Composable
+fun HistoryCard(item: Transaction, isExpanded: Boolean, onToggleExpand: () -> Unit) {
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp)
+            .shadow(1.dp, RoundedCornerShape(12.dp))
+            .clickable { onToggleExpand() }
+            .animateContentSize(tween(300)),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFF5F5F5)),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+
+        Column(Modifier.padding(12.dp)) {
+
+            Text("📅 ${item.date ?: "Unknown Date"}",
+                fontWeight = FontWeight.SemiBold,
+                color = Color(0xFF37474F))
+
+            Text("⏰ ${item.startTime} → ${item.endTime ?: "🟢 Active"}",
+                color = Color(0xFF607D8B))
+
+            Text("👤 ${item.name ?: ""} (${item.role ?: ""})",
+                color = Color(0xFF424242))
+
+            Text("🚗 ${item.vehicleNumber}", color = Color(0xFF1E88E5))
+
+            Text("📹 ${item.camera}", color = Color(0xFF757575))
+
+            Spacer(Modifier.height(6.dp))
+
+            ConditionalStats(item)
+
+            AnimatedVisibility(
+                visible = isExpanded,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
+            ) {
+
+                Column {
+
+                    Spacer(Modifier.height(8.dp))
+
+                    if (item.imageUrl.isNullOrBlank()) {
+                        Text("❌ No image available", color = Color.Red)
+                    } else {
+                        Image(
+                            painter = rememberAsyncImagePainter(item.imageUrl),
+                            contentDescription = null,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(160.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                        )
                     }
                 }
             }
@@ -166,74 +484,28 @@ fun DashboardScreen() {
     }
 }
 
+// -------------------------------------------------------------
+// COMMON STATS BASED ON CAMERA
+// -------------------------------------------------------------
 @Composable
-fun TodayBox(item: Transaction) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(bottom = 12.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .border(
-                width = if (item.endTime == null) 2.dp else 0.dp,
-                color = if (item.endTime == null) Color(0xFF4ade80) else Color.Transparent,
-                shape = RoundedCornerShape(10.dp)
-            )
-            .background(Color(0xFF1e293b))
-            .padding(12.dp)
-    ) {
-        Row(modifier = Modifier.fillMaxWidth()) {
-            Text("📅 ${item.date ?: "N/A"}", color = Color(0xFFeceff0), fontSize = 16.sp, modifier = Modifier.weight(1f))
-            if (item.endTime == null)
-                Text("🟢 LIVE ⏱ ${item.startTime}", color = Color(0xFF4ade80))
-            else
-                Text("⏰ ${item.startTime} 🔚 ${item.endTime}", color = Color(0xFFbbbbbb))
-        }
-
-        Spacer(Modifier.height(8.dp))
-
-        Row(Modifier.fillMaxWidth()) {
-            Column(Modifier.weight(1f)) {
-                Text("👤 ${item.name}", color = Color(0xFFe2e8f0))
-                Text("🧑‍💼 ${item.role}", color = Color(0xFFe2e8f0))
-                Text("📦 Box: ${item.box}", color = Color(0xFFe2e8f0))
-                Text("🧵 Bale: ${item.bale}", color = Color(0xFFe2e8f0))
-                Text("🎒 Bag: ${item.bag}", color = Color(0xFFe2e8f0))
-                Text("🛒 Trolley: ${item.trolley}", color = Color(0xFFe2e8f0))
+fun ConditionalStats(item: Transaction) {
+    Row {
+        when (item.camera) {
+            "cam_1" -> {
+                Text("📦 ${item.box ?: 0} box", color = Color(0xFF00695C))
+                Spacer(Modifier.width(12.dp))
+                Text("🧵 ${item.bale ?: 0} bale", color = Color(0xFF00695C))
+                Spacer(Modifier.width(12.dp))
+                Text("🛒 ${item.trolley ?: 0} trolley", color = Color(0xFF00695C))
             }
-            Column(Modifier.weight(1f), horizontalAlignment = Alignment.End) {
-                Text("🚗 ${item.vehicleNumber}", color = Color(0xFFe2e8f0))
-                Text("📹 ${item.camera}", color = Color(0xFFe2e8f0))
-                Spacer(Modifier.height(6.dp))
-                if (!item.imageUrl.isNullOrBlank()) {
-                    Image(
-                        painter = rememberAsyncImagePainter(item.imageUrl),
-                        contentDescription = "Image",
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(150.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                    )
-                } else {
-                    Text("No Image", color = Color(0xFF94a3b8))
-                }
+            "cam_2" -> {
+                Text("🎒 ${item.bag ?: 0} bag", color = Color(0xFF00695C))
+                Spacer(Modifier.width(12.dp))
+                Text("🛒 ${item.trolley ?: 0} trolley", color = Color(0xFF00695C))
+            }
+            else -> {
+                Text("⚙️ No data", color = Color.Gray)
             }
         }
-    }
-}
-
-@Composable
-fun HistoryBox(item: Transaction) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(Color(0xFF1e293b))
-            .padding(10.dp)
-    ) {
-        Text("📅 ${item.date}", color = Color(0xFFe2e8f0))
-        Text("⏰ ${item.startTime} ${if (item.endTime != null) "🔚 ${item.endTime}" else "🟢 LIVE"}", color = Color(0xFFbfc6cc))
-        Text("👤 ${item.name} (${item.role})", color = Color(0xFFe2e8f0))
-        Text("🚗 ${item.vehicleNumber}", color = Color(0xFFe2e8f0))
-        Text("📹 ${item.camera}", color = Color(0xFFe2e8f0))
     }
 }
