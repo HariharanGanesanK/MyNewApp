@@ -15,13 +15,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.*
+import com.example.helloworldapp.config.AppConfig
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
-import java.io.IOException
 import java.util.*
 
 class Cam1Page : ComponentActivity() {
@@ -34,15 +36,15 @@ class Cam1Page : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun Cam1Screen(context: Context) {
-    val prefs = context.getSharedPreferences("UserPrefs", Context.MODE_PRIVATE)
+    val prefs = context.getSharedPreferences(AppConfig.PREFS_NAME, Context.MODE_PRIVATE)
 
-    val name = prefs.getString("name", "N/A") ?: "N/A"
-    val role = prefs.getString("role", "N/A") ?: "N/A"
-    val userId = prefs.getString("userId", "N/A") ?: "N/A"
-    val deviceUniqueId = prefs.getString("deviceId", "N/A") ?: "N/A"
+    val name = prefs.getString(AppConfig.KEY_NAME, "N/A") ?: "N/A"
+    val role = prefs.getString(AppConfig.KEY_ROLE, "N/A") ?: "N/A"
+    val userId = prefs.getString(AppConfig.KEY_USER_ID, "N/A") ?: "N/A"
+    val deviceUniqueId = prefs.getString(AppConfig.KEY_DEVICE_ID, "N/A") ?: "N/A"
 
-    val storedSessionId = prefs.getString("session_id", null)
-    val storedTransactionId = prefs.getString("transaction_id_cam1", "")
+    val storedSessionId = prefs.getString(AppConfig.KEY_SESSION_ID, null)
+    val storedTransactionId = prefs.getString(AppConfig.KEY_TRANSACTION_CAM1, "")
 
     var sessionId by remember { mutableStateOf(storedSessionId ?: "") }
     var currentTransactionId by remember { mutableStateOf(storedTransactionId ?: "") }
@@ -50,217 +52,106 @@ fun Cam1Screen(context: Context) {
     var vehicleNumber by remember { mutableStateOf(TextFieldValue("")) }
     var isDetecting by remember { mutableStateOf(currentTransactionId.isNotEmpty()) }
 
-    // LIVE COUNTS
     var counts by remember { mutableStateOf(mapOf("box" to 0, "bale" to 0, "trolley" to 0)) }
-
-    var pollingJob by remember { mutableStateOf<Job?>(null) }
 
     val coroutineScope = rememberCoroutineScope()
     val client = remember { OkHttpClient() }
 
-    // Confirmation dialog trigger
     var showInvalidConfirmDialog by remember { mutableStateOf(false) }
 
-    // Regex for vehicle number verification
-    val vehicleNumberRegex = remember {
-        Regex(
-            "^[A-Z]{2}\\s?\\d{1,2}\\s?[A-Z]{1,3}\\s?\\d{1,4}$"
-        )
-    }
+    val vehicleNumberRegex = remember { Regex("^[A-Z]{2}\\s?\\d{1,2}\\s?[A-Z]{1,3}\\s?\\d{1,4}$") }
 
-    // Backend URLs
-    val SERVER_IP = "192.168.1.7"
-    val START_URL = "http://$SERVER_IP:8000/start"
-    val STOP_URL = "http://$SERVER_IP:8000/stop"
-    val COUNT_URL = "http://$SERVER_IP:8000/poll_counts"
+    val mqttHelper = remember { MqttHelper(AppConfig.CAM1_SERVER_IP) }
 
-    // ------------ POLLING FUNCTION ------------
-    fun startPollingCounts(sessionId: String, transactionId: String) {
-        pollingJob?.cancel() // stop old one if any
+    LaunchedEffect(isDetecting) {
+        if (isDetecting) {
+            val topic = "jlmill/sessions/$sessionId/$currentTransactionId/counts"
+            Log.d("MQTT", "Subscribing: $topic")
 
-        pollingJob = coroutineScope.launch(Dispatchers.IO) {
-            while (isActive) {
-                try {
-                    val request = Request.Builder()
-                        .url("$COUNT_URL/$sessionId/$transactionId")
-                        .get()
-                        .build()
-
-                    val response = client.newCall(request).execute()
-                    val bodyString = response.body?.string()
-                    response.close()
-
-                    if (!response.isSuccessful || bodyString.isNullOrEmpty()) {
-                        delay(1000)
-                        continue
-                    }
-
-                    val json = JSONObject(bodyString)
-                    val c = json.getJSONObject("counts")
-
-                    val updatedCounts = mapOf(
-                        "box" to c.optInt("box", 0),
-                        "bale" to c.optInt("bale", 0),
-                        "trolley" to c.optInt("trolley", 0)
-                    )
-
-                    withContext(Dispatchers.Main) {
-                        counts = updatedCounts
-                    }
-
-                } catch (e: Exception) {
-                    Log.e("POLL", "Polling failed: ${e.message}")
+            mqttHelper.connect {
+                mqttHelper.subscribe(topic) { msg ->
+                    try {
+                        val json = JSONObject(msg)
+                        val c = json.getJSONObject("counts")
+                        counts = mapOf(
+                            "box" to c.optInt("box"),
+                            "bale" to c.optInt("bale"),
+                            "trolley" to c.optInt("trolley")
+                        )
+                    } catch (_: Exception) {}
                 }
-
-                delay(1000)
             }
         }
     }
-    // ------------ END POLLING FUNCTION ------------
 
     MaterialTheme {
         Surface(modifier = Modifier.fillMaxSize()) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
+            Column(modifier = Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                Text(AppConfig.CAM1_TITLE, fontSize = 23.sp)
+                Spacer(Modifier.height(12.dp))
+                Text("${AppConfig.CAM1_SUPERVISOR_LABEL}: $name", fontSize = 16.sp)
 
-                Text("Detection Control - Cam 1", fontSize = 23.sp)
+                if (sessionId.isNotEmpty()) Text("${AppConfig.CAM1_SESSION_LABEL}: $sessionId", fontSize = 12.sp)
+                if (currentTransactionId.isNotEmpty()) Text("${AppConfig.CAM1_TRANSACTION_LABEL}: $currentTransactionId", fontSize = 12.sp)
 
-                Spacer(modifier = Modifier.height(12.dp))
-                Text("Supervisor: $name", fontSize = 16.sp)
+                Spacer(Modifier.height(24.dp))
+                OutlinedTextField(value = vehicleNumber, onValueChange = { vehicleNumber = it.copy(text = it.text.uppercase()) }, label = { Text(AppConfig.CAM1_VEHICLE_LABEL) }, modifier = Modifier.fillMaxWidth(0.9f))
+                Spacer(Modifier.height(24.dp))
 
-                if (sessionId.isNotEmpty()) Text("Session ID: $sessionId", fontSize = 12.sp)
-                if (currentTransactionId.isNotEmpty()) Text("Transaction ID: $currentTransactionId", fontSize = 12.sp)
+                Row(horizontalArrangement = Arrangement.SpaceEvenly, modifier = Modifier.fillMaxWidth()) {
+                    Button(onClick = {
+                        if (sessionId.isEmpty()) { Toast.makeText(context, AppConfig.CAM1_TOAST_NO_SESSION, Toast.LENGTH_SHORT).show(); return@Button }
+                        if (!vehicleNumberRegex.matches(vehicleNumber.text.trim())) { showInvalidConfirmDialog = true; return@Button }
 
-                Spacer(modifier = Modifier.height(24.dp))
+                        coroutineScope.launch {
+                            val transactionId = UUID.randomUUID().toString()
+                            currentTransactionId = transactionId
+                            prefs.edit().putString(AppConfig.KEY_TRANSACTION_CAM1, transactionId).apply()
 
-                OutlinedTextField(
-                    value = vehicleNumber,
-                    onValueChange = {
-                        vehicleNumber = it.copy(text = it.text.uppercase())
-                    },
-                    label = { Text("Vehicle Number") },
-                    modifier = Modifier.fillMaxWidth(0.9f)
-                )
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                // ---------------- Buttons ----------------
-                Row(
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-
-                    // START
-                    Button(
-                        onClick = {
-                            if (sessionId.isEmpty()) {
-                                Toast.makeText(context, "No session ID found!", Toast.LENGTH_SHORT).show()
-                                return@Button
+                            startDetectionCam1(context, client, AppConfig.CAM1_START_URL, name, role, userId, deviceUniqueId, vehicleNumber.text, sessionId, transactionId) { ok ->
+                                if (ok) isDetecting = true
                             }
+                        }
+                    }, enabled = !isDetecting, modifier = Modifier.width(150.dp)) { Text(AppConfig.CAM1_BUTTON_START) }
 
-                            if (!vehicleNumberRegex.matches(vehicleNumber.text.trim())) {
-                                showInvalidConfirmDialog = true
-                                return@Button
-                            }
-
-                            coroutineScope.launch {
-                                val transactionId = UUID.randomUUID().toString()
-                                currentTransactionId = transactionId
-                                prefs.edit().putString("transaction_id_cam1", transactionId).apply()
-
-                                startDetectionCam1(
-                                    context, client, START_URL,
-                                    name, role, userId, deviceUniqueId,
-                                    vehicleNumber.text, sessionId, transactionId
-                                ) { success ->
-                                    if (success) {
-                                        isDetecting = true
-                                        startPollingCounts(sessionId, transactionId)
-                                    }
-                                }
-                            }
-                        },
-                        enabled = !isDetecting,
-                        modifier = Modifier.width(150.dp)
-                    ) { Text("Start") }
-
-                    // STOP
-                    Button(
-                        onClick = {
-                            coroutineScope.launch {
-                                stopDetectionCam1(context, client, STOP_URL, sessionId, currentTransactionId) {}
-
-                                pollingJob?.cancel()
-                                pollingJob = null
-
-                                isDetecting = false
-                                counts = mapOf("box" to 0, "bale" to 0, "trolley" to 0)
-                                vehicleNumber = TextFieldValue("")
-                                currentTransactionId = ""
-                                prefs.edit().remove("transaction_id_cam1").apply()
-
-                                Toast.makeText(context, "Detection stopped", Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                        enabled = isDetecting,
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                        modifier = Modifier.width(150.dp)
-                    ) { Text("Stop") }
+                    Button(onClick = {
+                        coroutineScope.launch {
+                            stopDetectionCam1(context, client, AppConfig.CAM1_STOP_URL, sessionId, currentTransactionId) {}
+                            isDetecting = false
+                            counts = mapOf("box" to 0, "bale" to 0, "trolley" to 0)
+                            vehicleNumber = TextFieldValue("")
+                            currentTransactionId = ""
+                            prefs.edit().remove(AppConfig.KEY_TRANSACTION_CAM1).apply()
+                            Toast.makeText(context, AppConfig.CAM1_TOAST_DETECTION_STOPPED, Toast.LENGTH_SHORT).show()
+                        }
+                    }, enabled = isDetecting, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error), modifier = Modifier.width(150.dp)) {
+                        Text(AppConfig.CAM1_BUTTON_STOP)
+                    }
                 }
-                // -----------------------------------------
 
-                Spacer(modifier = Modifier.height(30.dp))
+                Spacer(Modifier.height(30.dp))
 
                 if (isDetecting) LiveCountsPanelCam1(counts)
             }
 
-            // INVALID NUMBER CONFIRMATION POPUP
             if (showInvalidConfirmDialog) {
-                AlertDialog(
-                    onDismissRequest = { showInvalidConfirmDialog = false },
-                    title = { Text("Invalid Vehicle Format") },
-                    text = { Text("This number doesn't match official format. Continue?") },
-                    confirmButton = {
-                        TextButton(onClick = {
-                            showInvalidConfirmDialog = false
+                AlertDialog(onDismissRequest = { showInvalidConfirmDialog = false }, title = { Text(AppConfig.CAM1_INVALID_TITLE) }, text = { Text(AppConfig.CAM1_INVALID_MESSAGE) }, confirmButton = {
+                    TextButton(onClick = {
+                        showInvalidConfirmDialog = false
+                        coroutineScope.launch {
+                            val transactionId = UUID.randomUUID().toString()
+                            currentTransactionId = transactionId
+                            prefs.edit().putString(AppConfig.KEY_TRANSACTION_CAM1, transactionId).apply()
 
-                            coroutineScope.launch {
-                                val transactionId = UUID.randomUUID().toString()
-                                currentTransactionId = transactionId
-                                prefs.edit().putString("transaction_id_cam1", transactionId).apply()
-
-                                startDetectionCam1(
-                                    context, client, START_URL,
-                                    name, role, userId, deviceUniqueId,
-                                    vehicleNumber.text, sessionId, transactionId
-                                ) { success ->
-                                    if (success) {
-                                        isDetecting = true
-                                        startPollingCounts(sessionId, transactionId)
-                                    }
-                                }
-                            }
-                        }) { Text("Yes") }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { showInvalidConfirmDialog = false }) {
-                            Text("Cancel")
+                            startDetectionCam1(context, client, AppConfig.CAM1_START_URL, name, role, userId, deviceUniqueId, vehicleNumber.text, sessionId, transactionId) { isDetecting = true }
                         }
-                    }
-                )
+                    }) { Text(AppConfig.CAM1_INVALID_YES) }
+                }, dismissButton = { TextButton(onClick = { showInvalidConfirmDialog = false }) { Text(AppConfig.CAM1_INVALID_CANCEL) } })
             }
         }
     }
 }
 
-// ------------------------------------------
-// START CAMERA API CALL
-// ------------------------------------------
 suspend fun startDetectionCam1(
     context: Context,
     client: OkHttpClient,
@@ -286,30 +177,22 @@ suspend fun startDetectionCam1(
             put("transaction_id", transactionId)
         }
 
-        val request = Request.Builder()
-            .url(url)
-            .post(payload.toString().toRequestBody("application/json".toMediaType()))
-            .build()
-
-        val response = client.newCall(request).execute()
-        val ok = response.isSuccessful
-        response.close()
+        val req = Request.Builder().url(url).post(payload.toString().toRequestBody("application/json".toMediaType())).build()
+        val res = client.newCall(req).execute()
+        val ok = res.isSuccessful
+        res.close()
 
         withContext(Dispatchers.Main) {
-            if (ok) Toast.makeText(context, "Detection Started!", Toast.LENGTH_SHORT).show()
+            if (ok) Toast.makeText(context, AppConfig.CAM1_TOAST_STARTED, Toast.LENGTH_SHORT).show()
         }
 
         onResult(ok)
-
     } catch (e: Exception) {
-        Log.e("START", "Error: ${e.message}")
+        Log.e("CAM1_START", "Error: ${e.message}")
         onResult(false)
     }
 }
 
-// ------------------------------------------
-// STOP CAMERA API CALL
-// ------------------------------------------
 suspend fun stopDetectionCam1(
     context: Context,
     client: OkHttpClient,
@@ -324,45 +207,28 @@ suspend fun stopDetectionCam1(
             put("transaction_id", transactionId)
         }
 
-        val request = Request.Builder()
-            .url(url)
-            .post(payload.toString().toRequestBody("application/json".toMediaType()))
-            .build()
-
-        val response = client.newCall(request).execute()
-        val ok = response.isSuccessful
-        response.close()
+        val req = Request.Builder().url(url).post(payload.toString().toRequestBody("application/json".toMediaType())).build()
+        val res = client.newCall(req).execute()
+        val ok = res.isSuccessful
+        res.close()
 
         withContext(Dispatchers.Main) {
-            if (ok) Toast.makeText(context, "Detection Stopped!", Toast.LENGTH_SHORT).show()
+            if (ok) Toast.makeText(context, AppConfig.CAM1_TOAST_STOPPED, Toast.LENGTH_SHORT).show()
         }
 
         onResult(ok)
-
     } catch (e: Exception) {
-        Log.e("STOP", "Error: ${e.message}")
+        Log.e("CAM1_STOP", "Error: ${e.message}")
         onResult(false)
     }
 }
 
-// ------------------------------------------
-// LIVE COUNTS UI
-// ------------------------------------------
 @Composable
 fun LiveCountsPanelCam1(counts: Map<String, Int>) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth(0.9f)
-            .padding(top = 16.dp),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
+    Card(modifier = Modifier.fillMaxWidth(0.9f).padding(top = 16.dp), shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+        Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Text("📊 Live Object Counts", fontSize = 18.sp)
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(Modifier.height(8.dp))
             Text("📦 Box: ${counts["box"]}")
             Text("🧵 Bale: ${counts["bale"]}")
             Text("🛒 Trolley: ${counts["trolley"]}")

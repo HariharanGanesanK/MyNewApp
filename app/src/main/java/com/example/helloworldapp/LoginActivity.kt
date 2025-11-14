@@ -16,9 +16,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.example.helloworldapp.config.AppConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -29,8 +29,9 @@ import org.json.JSONObject
 import java.io.IOException
 
 class LoginActivity : ComponentActivity() {
+
     private val client = OkHttpClient()
-    private val backendUrl = "http://192.168.1.7:9010"
+    private val backendUrl = AppConfig.LOGIN_BACKEND_URL
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -43,107 +44,73 @@ class LoginActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LoginHomeScreen(context: Context, client: OkHttpClient, backendUrl: String) {
-    val prefs = context.getSharedPreferences("UserPrefs", Context.MODE_PRIVATE)
-    val userId = prefs.getString("userId", "N/A")
-    val deviceId = prefs.getString("deviceId", "N/A")
+    val prefs = context.getSharedPreferences(AppConfig.PREFS_NAME, Context.MODE_PRIVATE)
+
+    val userId = prefs.getString(AppConfig.KEY_USER_ID, "N/A")
+    val deviceId = prefs.getString(AppConfig.KEY_DEVICE_ID, "N/A")
+
     var sessionId by remember { mutableStateOf("Checking session...") }
     var showProfileDialog by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
 
-    // 🧠 Check for both Cam1 and Cam2 transaction IDs
     LaunchedEffect(Unit) {
-        val cam1Transaction = prefs.getString("transaction_id_cam1", null)
-        val cam2Transaction = prefs.getString("transaction_id_cam2", null)
+        val cam1Transaction = prefs.getString(AppConfig.KEY_TRANSACTION_CAM1, null)
+        val cam2Transaction = prefs.getString(AppConfig.KEY_TRANSACTION_CAM2, null)
 
         if (cam1Transaction != null || cam2Transaction != null) {
-            // ✅ Active detection on either Cam1 or Cam2 — reuse old session
-            val savedSession = prefs.getString("session_id", "N/A")
-            sessionId = savedSession ?: "N/A"
-            Toast.makeText(context, "Reusing existing session (active detection running)", Toast.LENGTH_SHORT).show()
+            sessionId = prefs.getString(AppConfig.KEY_SESSION_ID, "N/A") ?: "N/A"
+            Toast.makeText(context, AppConfig.TOAST_REUSE_SESSION, Toast.LENGTH_SHORT).show()
         } else if (userId != "N/A" && deviceId != "N/A") {
-            // 🆕 No detection active — create new session
             loading = true
             val session = createSession(client, backendUrl, userId!!, deviceId!!, context)
             loading = false
-            sessionId = session ?: "Failed to generate session"
-            if (session != null) prefs.edit().putString("session_id", session).apply()
+            sessionId = session ?: AppConfig.TOAST_SESSION_FAILED
+            if (session != null) prefs.edit().putString(AppConfig.KEY_SESSION_ID, session).apply()
         } else {
             sessionId = "Missing user/device info"
         }
     }
 
-    // 🌈 UI Layout
     MaterialTheme {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(20.dp)
-        ) {
-            // 👤 Profile Icon (Top Right)
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .clickable { showProfileDialog = true }
-            ) {
+        Box(modifier = Modifier.fillMaxSize().padding(20.dp)) {
+            Box(modifier = Modifier.align(Alignment.TopEnd).clickable { showProfileDialog = true }) {
                 Icon(
                     imageVector = Icons.Default.AccountCircle,
                     contentDescription = "Profile",
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(CircleShape)
+                    modifier = Modifier.size(48.dp).clip(CircleShape)
                 )
             }
 
-            // 🧭 Main Buttons
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-                modifier = Modifier.align(Alignment.Center)
-            ) {
-                Text("Welcome!", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center, modifier = Modifier.align(Alignment.Center)) {
+                Text("Welcome!", style = MaterialTheme.typography.headlineMedium)
                 Spacer(modifier = Modifier.height(30.dp))
 
-                Button(
-                    onClick = {
-                        val intent = Intent(context, DashboardActivity::class.java)
-                        context.startActivity(intent)
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
+                Button(onClick = { context.startActivity(Intent(context, DashboardActivity::class.java)) }, modifier = Modifier.fillMaxWidth()) {
                     Text("Go to Dashboard")
                 }
 
                 Spacer(modifier = Modifier.height(20.dp))
 
-                Button(
-                    onClick = {
-                        val intent = Intent(context, CamSelectionActivity::class.java)
-                        context.startActivity(intent)
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
+                Button(onClick = { context.startActivity(Intent(context, CamSelectionActivity::class.java)) }, modifier = Modifier.fillMaxWidth()) {
                     Text("Go to Detection")
                 }
 
                 Spacer(modifier = Modifier.height(30.dp))
-                Text("Session ID: $sessionId", style = MaterialTheme.typography.bodyMedium)
+                Text("Session ID: $sessionId")
                 if (loading) {
                     Spacer(modifier = Modifier.height(12.dp))
                     CircularProgressIndicator()
                 }
             }
 
-            // 💬 Profile popup
             if (showProfileDialog) {
-                val name = prefs.getString("name", "N/A")
-                val role = prefs.getString("role", "N/A")
+                val name = prefs.getString(AppConfig.KEY_NAME, "N/A")
+                val role = prefs.getString(AppConfig.KEY_ROLE, "N/A")
 
                 AlertDialog(
                     onDismissRequest = { showProfileDialog = false },
                     confirmButton = {
-                        TextButton(onClick = { showProfileDialog = false }) {
-                            Text("Close")
-                        }
+                        TextButton(onClick = { showProfileDialog = false }) { Text("Close") }
                     },
                     title = { Text("User Info") },
                     text = {
@@ -159,9 +126,6 @@ fun LoginHomeScreen(context: Context, client: OkHttpClient, backendUrl: String) 
     }
 }
 
-// -----------------------------------------------------------
-// 🔌 Backend Communication - Create Session
-// -----------------------------------------------------------
 suspend fun createSession(
     client: OkHttpClient,
     backendUrl: String,
@@ -175,7 +139,7 @@ suspend fun createSession(
     }
 
     val request = Request.Builder()
-        .url("$backendUrl/api/auth/login")
+        .url(backendUrl + AppConfig.ENDPOINT_LOGIN)
         .post(json.toString().toRequestBody("application/json".toMediaType()))
         .build()
 
@@ -211,6 +175,6 @@ fun LoginPreview() {
     LoginHomeScreen(
         context = androidx.compose.ui.platform.LocalContext.current,
         client = OkHttpClient(),
-        backendUrl = "http://192.168.1.7:9010"
+        backendUrl = AppConfig.LOGIN_BACKEND_URL
     )
 }

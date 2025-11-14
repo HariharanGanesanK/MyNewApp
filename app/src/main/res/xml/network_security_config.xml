@@ -1,15 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- Allow HTTP for both FastAPI backends -->
+
+    <!-- Allow HTTP for local FastAPI + MQTT servers -->
     <domain-config cleartextTrafficPermitted="true">
-        <!-- Backend 1 (Session/Authentication) -->
+
+        <!-- Backend 1 (FastAPI - Session/Auth server) -->
         <domain includeSubdomains="true">192.168.1.6</domain>
 
-        <!-- Backend 2 (Dashboard/Transactions) -->
+        <!-- Backend 2 (FastAPI + MQTT - Detection server @ 192.168.1.7) -->
         <domain includeSubdomains="true">192.168.1.7</domain>
 
-        <!-- Emulator/Localhost Access -->
+        <!-- Allow local device access -->
         <domain includeSubdomains="true">localhost</domain>
+
+        <!-- Android emulator → Host machine mapping -->
         <domain includeSubdomains="true">10.0.2.2</domain>
+
     </domain-config>
+
 </network-security-config>
